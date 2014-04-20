@@ -8,9 +8,12 @@
 #include <vector>
 
 #include <assimp/Importer.hpp>
-#include <assimp/mesh.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <assimp/mesh.h>
+#include <assimp/material.h>
+#include <assimp/color4.h>
+#include <assimp/vector3.h>
 
 #include <scenex>
 #include <filex>
@@ -39,11 +42,125 @@ void scene_help()
 namespace
 {
 
+template <class D, class S>
+void fastcpyn(D* dest, S const* src, size_t N)
+{
+	static_assert(sizeof(*dest) == sizeof(*src), "Incompatible types");
+	memcpy(dest, src, sizeof(*dest) * N);
+}
+
+template <class D, class S, class C>
+void castcpyn(D* dest, S const* src, size_t N, C&& cast)
+{
+	for (auto destEnd = dest + N; dest < destEnd; ++dest, ++src)
+		*dest = cast(*src);
+}
+
+inline unsigned color_cast(aiColor4t<float> const& c)
+{
+	unsigned a = math::clamp(unsigned(c.a * 256.0f), 0U, 255U);
+	unsigned r = math::clamp(unsigned(c.r * 256.0f), 0U, 255U);
+	unsigned g = math::clamp(unsigned(c.g * 256.0f), 0U, 255U);
+	unsigned b = math::clamp(unsigned(c.b * 256.0f), 0U, 255U);
+	return (a << 24U) | (r << 16U) | (g << 8U) | (b);
+}
+
+void write_meshes(scene::Scene& outScene, aiScene const& inScene)
+{
+	{
+		size_t vertexCount = 0;
+		size_t normalCount = 0;
+		size_t colorCount = 0;
+		size_t texcoordCount = 0;
+		size_t tangentCount = 0;
+		size_t indexCount = 0;
+		size_t meshCount = 0;
+
+		for (unsigned i = 0, ie = inScene.mNumMeshes; i < ie; ++i)
+		{
+			auto& mesh = *inScene.mMeshes[i];
+			if (!mesh.HasPositions()) continue;
+
+			++meshCount;
+			vertexCount += mesh.mNumVertices;
+			indexCount += mesh.mNumFaces * 3;
+
+			if (mesh.HasNormals()) normalCount = vertexCount;
+			if (mesh.HasVertexColors(0)) colorCount = vertexCount;
+			if (mesh.HasTextureCoords(0)) texcoordCount = vertexCount;
+			if (mesh.HasTangentsAndBitangents()) tangentCount = vertexCount;
+		}
+
+		outScene.positions.resize(vertexCount);
+		outScene.normals.resize(normalCount);
+		outScene.colors.resize(colorCount);
+		outScene.texcoords.resize(texcoordCount);
+		outScene.tangents.resize(tangentCount);
+		outScene.bitangents.resize(tangentCount);
+		outScene.indices.resize(indexCount);
+
+		outScene.materials.resize(inScene.mNumMaterials);
+		outScene.meshes.resize(meshCount);
+	}
+
+	{
+		for (unsigned i = 0, ie = inScene.mNumMaterials; i < ie; ++i)
+		{
+			auto& mat = *inScene.mMaterials[i];
+			auto& outMat = outScene.materials[i];
+
+			// todo
+		}
+
+		unsigned vertexCount = 0;
+		unsigned indexCount = 0;
+		unsigned meshCount = 0;
+
+		for (unsigned i = 0, ie = inScene.mNumMeshes; i < ie; ++i)
+		{
+			auto& mesh = *inScene.mMeshes[i];
+			if (!mesh.HasPositions()) continue;
+
+			fastcpyn(outScene.positions.data() + vertexCount, mesh.mVertices, mesh.mNumVertices);
+			
+			if (mesh.HasNormals()) fastcpyn(outScene.normals.data() + vertexCount, mesh.mNormals, mesh.mNumVertices);
+			if (mesh.HasTangentsAndBitangents()) {
+				fastcpyn(outScene.tangents.data() + vertexCount, mesh.mTangents, mesh.mNumVertices);
+				fastcpyn(outScene.bitangents.data() + vertexCount, mesh.mBitangents, mesh.mNumVertices);
+			}
+			
+			if (mesh.HasTextureCoords(0))
+				castcpyn(outScene.texcoords.data() + vertexCount, mesh.mTextureCoords[0], mesh.mNumVertices
+					, [](aiVector3D const& c) { return reinterpret_cast<math::vec<float, 2> const&>(c); });
+
+			if (mesh.HasVertexColors(0))
+				castcpyn(outScene.colors.data() + vertexCount, mesh.mColors[0], mesh.mNumVertices, color_cast);
+
+			auto indexEnd = indexCount;
+
+			for (unsigned i = 0, ie = mesh.mNumFaces; i < ie; ++i)
+				for (int j = 0; j < 3; ++j)
+					outScene.indices.data()[indexEnd++] = vertexCount + mesh.mFaces[i].mIndices[j];
+
+			auto& outMesh = outScene.meshes[meshCount];
+
+			outMesh.primitives.first = indexCount;
+			outMesh.primitives.last = indexEnd;
+			// todo: outMesh.bounds;
+			outMesh.material = mesh.mMaterialIndex;
+
+			++meshCount;
+			vertexCount += mesh.mNumVertices;
+			indexCount = indexEnd;
+		}
+	}
+}
+
 void write_scene(const char* outName, aiScene const& inScene)
 {
 	scene::Scene outScene;
 
-
+	write_meshes(outScene, inScene);
 
 	auto bytes = scene::dump_scene(outScene);
 	auto file = stdx::write_binary_file(outName, std::ios_base::trunc);
