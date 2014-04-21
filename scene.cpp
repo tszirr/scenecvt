@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <functional>
 
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
@@ -112,6 +113,7 @@ void get_material_property(aiMaterial const& mat, A&& a, B&& b, C&& c, Dest& des
 
 void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 {
+	// Set up texture table
 	std::map<std::string, unsigned> textureIdcs;
 	size_t textureChars = 0;
 	auto&& lookupTexture = [&](aiString const& path) -> unsigned
@@ -125,6 +127,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 	// null dummy (textureIdx == 0)
 	lookupTexture(aiString("no:tex"));
 
+	// Count & check
 	{
 		size_t vertexCount = 0;
 		size_t normalCount = 0;
@@ -159,49 +162,25 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 
 		outScene.materials.resize(inScene.mNumMaterials);
 		outScene.meshes.resize(meshCount);
+
+		size_t instanceCount = 0;
+
+		std::function<void (aiNode const&)> addNodeMeshes = [&](aiNode const& node)
+		{
+			instanceCount += node.mNumMeshes;
+
+			if (node.mChildren)
+				for (unsigned i = 0, ie = node.mNumChildren; i < ie; ++i)
+					addNodeMeshes(*node.mChildren[i]);
+		};
+		addNodeMeshes(*inScene.mRootNode);
+		
+		outScene.instances.resize(instanceCount);
 	}
 
+	// Geometry & meshes
 	{
-		for (unsigned i = 0, ie = inScene.mNumMaterials; i < ie; ++i)
-		{
-			auto& mat = *inScene.mMaterials[i];
-			auto& outMat = outScene.materials[i];
-
-			outMat.reset_default();
-			
-			// Properties
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_AMBIENT, outMat.diffuse, binary_converter());
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_DIFFUSE, outMat.diffuse, binary_converter());
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_EMISSIVE, outMat.emissive, binary_converter());
-			
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_SPECULAR, outMat.specular, binary_converter());
-			get_material_property<float>(mat, AI_MATKEY_SHININESS_STRENGTH, [&](float pow) { for (auto& c : outMat.specular.c) c *= pow; });
-			get_material_property<float>(mat, AI_MATKEY_SHININESS, outMat.shininess, binary_duplicator());
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_REFLECTIVE, outMat.reflectivity, binary_converter());
-
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_TRANSPARENT, outMat.filter, binary_converter());
-			get_material_property<float>(mat, AI_MATKEY_OPACITY, [&](float opac) { 
-				bool color_opaque = [&]() { for (auto& c : outMat.filter.c) if (c != 0.0f) return false; return true; }();
-				for (auto& c : outMat.filter.c) if (color_opaque) c = 1.0f - opac; else c *= 1.0f - opac;
-			});
-			get_material_property<float>(mat, AI_MATKEY_REFRACTI, outMat.refract, binary_duplicator());
-
-			// Textures
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_AMBIENT(0), outMat.tex.diffuse, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DIFFUSE(0), outMat.tex.diffuse, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_EMISSIVE(0), outMat.tex.emissive, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_SPECULAR(0), outMat.tex.specular, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_SHININESS(0), outMat.tex.shininess, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_REFLECTION(0), outMat.tex.reflectivity, textureConvert);
-
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_OPACITY(0), outMat.tex.filter, textureConvert);
-
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_NORMALS(0), outMat.tex.normal, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DISPLACEMENT(0), outMat.tex.bump, textureConvert);
-			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_HEIGHT(0), outMat.tex.bump, textureConvert);
-			get_material_property<float>(mat, AI_MATKEY_BUMPSCALING, outMat.tex.bumpScale, binary_duplicator());
-		}
-
+		
 		unsigned vertexCount = 0;
 		unsigned indexCount = 0;
 		unsigned meshCount = 0;
@@ -243,14 +222,88 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			indexCount = indexEnd;
 		}
 	}
+	
+	// Materials
+	{
+		for (unsigned i = 0, ie = inScene.mNumMaterials; i < ie; ++i)
+		{
+			auto& mat = *inScene.mMaterials[i];
+			auto& outMat = outScene.materials[i];
 
+			outMat.reset_default();
+			
+			// Properties
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_AMBIENT, outMat.diffuse, binary_converter());
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_DIFFUSE, outMat.diffuse, binary_converter());
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_EMISSIVE, outMat.emissive, binary_converter());
+			
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_SPECULAR, outMat.specular, binary_converter());
+			get_material_property<float>(mat, AI_MATKEY_SHININESS_STRENGTH, [&](float pow) { for (auto& c : outMat.specular.c) c *= pow; });
+			get_material_property<float>(mat, AI_MATKEY_SHININESS, outMat.shininess, binary_duplicator());
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_REFLECTIVE, outMat.reflectivity, binary_converter());
+
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_TRANSPARENT, outMat.filter, binary_converter());
+			get_material_property<float>(mat, AI_MATKEY_OPACITY, [&](float opac) { 
+				bool color_opaque = [&]() { for (auto& c : outMat.filter.c) if (c != 0.0f) return false; return true; }();
+				for (auto& c : outMat.filter.c) if (color_opaque) c = 1.0f - opac; else c *= 1.0f - opac;
+			});
+			get_material_property<float>(mat, AI_MATKEY_REFRACTI, outMat.refract, binary_duplicator());
+
+			// Textures
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_AMBIENT(0), outMat.tex.diffuse, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DIFFUSE(0), outMat.tex.diffuse, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_EMISSIVE(0), outMat.tex.emissive, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_SPECULAR(0), outMat.tex.specular, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_SHININESS(0), outMat.tex.shininess, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_REFLECTION(0), outMat.tex.reflectivity, textureConvert);
+
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_OPACITY(0), outMat.tex.filter, textureConvert);
+
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_NORMALS(0), outMat.tex.normal, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DISPLACEMENT(0), outMat.tex.bump, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_HEIGHT(0), outMat.tex.bump, textureConvert);
+			get_material_property<float>(mat, AI_MATKEY_BUMPSCALING, outMat.tex.bumpScale, binary_duplicator());
+		}
+
+	}
+
+	// Textures
 	{
 		outScene.textures.resize(textureChars);
 		auto textureData = outScene.textures.data();
 
 		for (auto&& texture : textureIdcs)
 			strcpy(textureData + texture.second, texture.first.c_str());
+	}
 
+	// Instances
+	{
+		size_t instanceCount = 0;
+
+		std::function<void (aiNode const&, aiMatrix4x4 const&)> addNodeMeshes = [&](aiNode const& node, aiMatrix4x4 const& transform)
+		{
+			math::vec< math::vec<float, 3>, 4 > instanceTransform;
+			for (int r = 0; r < 4; ++r)
+				for (int c = 0; c < 3; ++c)
+					instanceTransform.c[r].c[c] = transform[c][r];
+
+			for (unsigned j = 0, je = node.mNumMeshes; j < je; ++j)
+			{
+				auto& instance = outScene.instances[instanceCount++];
+
+				instance.mesh = node.mMeshes[j];
+				instance.transform = instanceTransform;
+				// todo: bounds?
+			}
+
+			if (node.mChildren)
+				for (unsigned j = 0, je = node.mNumChildren; j < je; ++j)
+				{
+					auto& child = *node.mChildren[j];
+					addNodeMeshes(child, transform * child.mTransformation);
+				}
+		};
+		addNodeMeshes(*inScene.mRootNode, inScene.mRootNode->mTransformation);
 	}
 }
 
