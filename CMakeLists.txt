@@ -10,6 +10,7 @@ project(${TOOL_PROJECT})
 #--------------------------------------------------------------------
 set(TOOL_SRC
   main.cpp
+  scene.cpp
   pch.cpp
   pch.h
   )
