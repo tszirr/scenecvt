@@ -120,7 +120,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 		if (ins.second) textureChars += ins.first->first.size() + 1; // // include null-termination
 		return ins.first->second;
 	};
-	auto&& textureConvert = [&](unsigned& dest, aiString const& path) { return lookupTexture(path); };
+	auto&& textureConvert = [&](unsigned& dest, aiString const& path) { dest = lookupTexture(path); };
 
 	// null dummy (textureIdx == 0)
 	lookupTexture(aiString("no:tex"));
@@ -167,7 +167,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			auto& mat = *inScene.mMaterials[i];
 			auto& outMat = outScene.materials[i];
 
-			outMat = scene::Material::default();
+			outMat.reset_default();
 			
 			// Properties
 			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_AMBIENT, outMat.diffuse, binary_converter());
@@ -303,6 +303,7 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 
 	// Re-generate missing normals
 	processFlags |= aiProcess_GenSmoothNormals;
+	importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, 45.0f);
 
 	// UVs only
 	processFlags |= aiProcess_GenUVCoords | aiProcess_TransformUVCoords;
