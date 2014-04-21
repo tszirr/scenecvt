@@ -34,6 +34,7 @@ void scene_help()
 	std::cout << "  /Mo            Optimize meshes"  << std::endl;
 //	std::cout << "  /Ms            Sort meshes"  << std::endl;
 	std::cout << "  /Sg            Geometry only, single material"  << std::endl;
+	std::cout << "  /Sm            Identify and merge redundant materials"  << std::endl;
 	std::cout << "  /Sp            Pretransform and merge all nodes and instances"  << std::endl;
 	std::cout << "  /Ssf <float>   Set scale factor to <float> (default 1.0)"  << std::endl;
 	std::cout << "  <input>        Input mesh file path"  << std::endl;
@@ -397,6 +398,9 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 		}
 		else if (stdx::check_flag(*arg, "Sg")) {
 			geometryOnly = true;
+		} 
+		else if (stdx::check_flag(*arg, "Sm")) {
+			processFlags |= aiProcess_RemoveRedundantMaterials;
 		} else if (stdx::check_flag(*arg, "Sp")) {
 			processFlags |= aiProcess_PreTransformVertices;
 			processMask |= aiProcess_OptimizeGraph; // incompatible
