@@ -363,7 +363,7 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 	processFlags |= aiProcess_GenUVCoords | aiProcess_TransformUVCoords;
 
 	// Reduce mesh & material count, flatten hierarchy
-	processFlags |= aiProcess_SplitLargeMeshes | aiProcess_OptimizeMeshes | aiProcess_OptimizeGraph;
+	processFlags |= aiProcess_OptimizeMeshes | aiProcess_OptimizeGraph;
 
 	for (auto arg = args; arg < args_end; ++arg)
 	{
