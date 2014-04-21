@@ -362,7 +362,7 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 	processFlags |= aiProcess_GenUVCoords | aiProcess_TransformUVCoords;
 
 	// Reduce mesh & material count, flatten hierarchy
-	processFlags |= aiProcess_OptimizeMeshes | aiProcess_OptimizeGraph;
+	processFlags |= aiProcess_SplitLargeMeshes | aiProcess_OptimizeMeshes | aiProcess_OptimizeGraph;
 
 	for (auto arg = args; arg < args_end; ++arg)
 	{
@@ -439,9 +439,14 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 	{
 		for (unsigned i = 0, ie = scene->mNumMaterials; i < ie; ++i)
 		{
+			auto& material = *scene->mMaterials[i];
+			// Ensure that each material has some kind of texture mapping that results in UV coords being generated
 			int mapping = aiTextureMapping_BOX;
-			scene->mMaterials[i]->Get(AI_MATKEY_MAPPING_DIFFUSE(0), mapping);
-			scene->mMaterials[i]->AddProperty(&mapping, 1, AI_MATKEY_MAPPING_DIFFUSE(0));
+			if (AI_FAILURE == material.Get(_AI_MATKEY_MAPPING_BASE, UINT_MAX, UINT_MAX, mapping))
+			{
+				scene->mMaterials[i]->Get(AI_MATKEY_MAPPING_DIFFUSE(0), mapping);
+				scene->mMaterials[i]->AddProperty(&mapping, 1, AI_MATKEY_MAPPING_DIFFUSE(0));
+			}
 		}
 	}
 
