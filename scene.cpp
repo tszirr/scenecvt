@@ -56,6 +56,35 @@ void castcpyn(D* dest, S const* src, size_t N, C&& cast)
 		*dest = cast(*src);
 }
 
+template <class D, class S, class C>
+void cnvtcpyn(D* dest, S const* src, size_t N, C&& convert)
+{
+	for (auto destEnd = dest + N; dest < destEnd; ++dest, ++src)
+		convert(*dest, *src);
+}
+
+struct binary_converter
+{
+	template <class Dest, class Src>
+	void operator ()(Dest& dest, Src const& src) const
+	{
+		static_assert(sizeof(dest) <= sizeof(src), "Too few bytes");
+		dest = reinterpret_cast<Dest const&>(src);
+	}
+};
+
+struct binary_duplicator
+{
+	template <class Dest, class Src>
+	void operator ()(Dest& dest, Src const& src) const
+	{
+		static_assert(sizeof(dest) % sizeof(src) == 0, "Dest has to be a multiple of source");
+		typedef Src dest_array[sizeof(dest) / sizeof(src)];
+		for (auto& v : reinterpret_cast<dest_array&>(dest))
+			v = src;
+	}
+};
+
 inline unsigned color_cast(aiColor4t<float> const& c)
 {
 	unsigned a = math::clamp(unsigned(c.a * 256.0f), 0U, 255U);
@@ -65,8 +94,37 @@ inline unsigned color_cast(aiColor4t<float> const& c)
 	return (a << 24U) | (r << 16U) | (g << 8U) | (b);
 }
 
+template <class Type, class Fun, class A, class B, class C>
+void get_material_property(aiMaterial const& mat, A&& a, B&& b, C&& c, Fun&& fun)
+{
+	Type t;
+	if (AI_SUCCESS == mat.Get(a, b, c, t))
+		fun(t);
+}
+
+template <class Type, class Dest, class Converter, class A, class B, class C>
+void get_material_property(aiMaterial const& mat, A&& a, B&& b, C&& c, Dest& dest, Converter&& convert)
+{
+	Type t;
+	if (AI_SUCCESS == mat.Get(a, b, c, t))
+		convert(dest, t);
+}
+
 void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 {
+	std::map<std::string, unsigned> textureIdcs;
+	size_t textureChars = 0;
+	auto&& lookupTexture = [&](aiString const& path) -> unsigned
+	{
+		auto ins = textureIdcs.insert( std::make_pair(std::string(path.C_Str()), unsigned(textureChars)) );
+		if (ins.second) textureChars += ins.first->first.size() + 1; // // include null-termination
+		return ins.first->second;
+	};
+	auto&& textureConvert = [&](unsigned& dest, aiString const& path) { return lookupTexture(path); };
+
+	// null dummy (textureIdx == 0)
+	lookupTexture(aiString("no:tex"));
+
 	{
 		size_t vertexCount = 0;
 		size_t normalCount = 0;
@@ -109,7 +167,39 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			auto& mat = *inScene.mMaterials[i];
 			auto& outMat = outScene.materials[i];
 
-			// todo
+			outMat = scene::Material::default();
+			
+			// Properties
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_AMBIENT, outMat.diffuse, binary_converter());
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_DIFFUSE, outMat.diffuse, binary_converter());
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_EMISSIVE, outMat.emissive, binary_converter());
+			
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_SPECULAR, outMat.specular, binary_converter());
+			get_material_property<float>(mat, AI_MATKEY_SHININESS_STRENGTH, [&](float pow) { for (auto& c : outMat.specular.c) c *= pow; });
+			get_material_property<float>(mat, AI_MATKEY_SHININESS, outMat.shininess, binary_duplicator());
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_REFLECTIVE, outMat.reflectivity, binary_converter());
+
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_TRANSPARENT, outMat.filter, binary_converter());
+			get_material_property<float>(mat, AI_MATKEY_OPACITY, [&](float opac) { 
+				bool color_opaque = [&]() { for (auto& c : outMat.filter.c) if (c != 0.0f) return false; return true; }();
+				for (auto& c : outMat.filter.c) if (color_opaque) c = 1.0f - opac; else c *= 1.0f - opac;
+			});
+			get_material_property<float>(mat, AI_MATKEY_REFRACTI, outMat.refract, binary_duplicator());
+
+			// Textures
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_AMBIENT(0), outMat.tex.diffuse, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DIFFUSE(0), outMat.tex.diffuse, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_EMISSIVE(0), outMat.tex.emissive, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_SPECULAR(0), outMat.tex.specular, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_SHININESS(0), outMat.tex.shininess, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_REFLECTION(0), outMat.tex.reflectivity, textureConvert);
+
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_OPACITY(0), outMat.tex.filter, textureConvert);
+
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_NORMALS(0), outMat.tex.normal, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DISPLACEMENT(0), outMat.tex.bump, textureConvert);
+			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_HEIGHT(0), outMat.tex.bump, textureConvert);
+			get_material_property<float>(mat, AI_MATKEY_BUMPSCALING, outMat.tex.bumpScale, binary_duplicator());
 		}
 
 		unsigned vertexCount = 0;
@@ -130,8 +220,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			}
 			
 			if (mesh.HasTextureCoords(0))
-				castcpyn(outScene.texcoords.data() + vertexCount, mesh.mTextureCoords[0], mesh.mNumVertices
-					, [](aiVector3D const& c) { return reinterpret_cast<math::vec<float, 2> const&>(c); });
+				cnvtcpyn(outScene.texcoords.data() + vertexCount, mesh.mTextureCoords[0], mesh.mNumVertices, binary_converter());
 
 			if (mesh.HasVertexColors(0))
 				castcpyn(outScene.colors.data() + vertexCount, mesh.mColors[0], mesh.mNumVertices, color_cast);
@@ -153,6 +242,15 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			vertexCount += mesh.mNumVertices;
 			indexCount = indexEnd;
 		}
+	}
+
+	{
+		outScene.textures.resize(textureChars);
+		auto textureData = outScene.textures.data();
+
+		for (auto&& texture : textureIdcs)
+			strcpy(textureData + texture.second, texture.first.c_str());
+
 	}
 }
 
