@@ -15,6 +15,7 @@
 #include <assimp/material.h>
 #include <assimp/color4.h>
 #include <assimp/vector3.h>
+#include <assimp/DefaultLogger.hpp>
 
 #include <scenex>
 #include <filex>
@@ -332,6 +333,7 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 	auto output = *--args_end;
 	auto input = *--args_end;
 
+	Assimp::DefaultLogger::create("assimp.log", Assimp::Logger::NORMAL, aiDefaultLogStream_STDOUT);
 	Assimp::Importer importer;
 
 	// Discard colors & tangents by default
