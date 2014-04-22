@@ -38,6 +38,7 @@ void scene_help()
 	std::cout << "  /Sm            Identify and merge redundant materials"  << std::endl;
 	std::cout << "  /Sp            Pretransform and merge all nodes and instances"  << std::endl;
 	std::cout << "  /Ssf <float>   Set scale factor to <float> (default 1.0)"  << std::endl;
+	std::cout << "  /S+ <inputs>   Merges many input meshes into one output mesh"  << std::endl;
 	std::cout << "  <input>        Input mesh file path"  << std::endl;
 	std::cout << "  <output>       Output mesh file path"  << std::endl;
 }
@@ -115,9 +116,17 @@ void get_material_property(aiMaterial const& mat, A&& a, B&& b, C&& c, Dest& des
 
 void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 {
+	// Allow for append usage
+	size_t baseVertexCount = outScene.positions.size();
+	size_t baseIndexCount = outScene.indices.size();
+	size_t baseMaterialCount = outScene.materials.size();
+	size_t baseMeshCount = outScene.meshes.size();
+	size_t baseTextureCount = outScene.textures.size();
+	size_t baseInstanceCount = outScene.instances.size();
+
 	// Set up texture table
 	std::map<std::string, unsigned> textureIdcs;
-	size_t textureChars = 0;
+	size_t textureChars = baseTextureCount;
 	auto&& lookupTexture = [&](aiString const& path) -> unsigned
 	{
 		auto ins = textureIdcs.insert( std::make_pair(std::string(path.C_Str()), unsigned(textureChars)) );
@@ -127,7 +136,8 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 	auto&& textureConvert = [&](unsigned& dest, aiString const& path) { dest = lookupTexture(path); };
 
 	// null dummy (textureIdx == 0)
-	lookupTexture(aiString("no:tex"));
+	if (textureChars == 0)
+		lookupTexture(aiString("no:tex"));
 
 	// Count & check
 	{
@@ -154,16 +164,16 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			if (mesh.HasTangentsAndBitangents()) tangentCount = vertexCount;
 		}
 
-		outScene.positions.resize(vertexCount);
-		outScene.normals.resize(normalCount);
-		outScene.colors.resize(colorCount);
-		outScene.texcoords.resize(texcoordCount);
-		outScene.tangents.resize(tangentCount);
-		outScene.bitangents.resize(tangentCount);
-		outScene.indices.resize(indexCount);
+		outScene.positions.resize(baseVertexCount + vertexCount);
+		outScene.normals.resize(baseVertexCount + normalCount);
+		outScene.colors.resize(baseVertexCount + colorCount);
+		outScene.texcoords.resize(baseVertexCount + texcoordCount);
+		outScene.tangents.resize(baseVertexCount + tangentCount);
+		outScene.bitangents.resize(baseVertexCount + tangentCount);
+		outScene.indices.resize(baseIndexCount + indexCount);
 
-		outScene.materials.resize(inScene.mNumMaterials);
-		outScene.meshes.resize(meshCount);
+		outScene.materials.resize(baseMaterialCount + inScene.mNumMaterials);
+		outScene.meshes.resize(baseMeshCount + meshCount);
 
 		size_t instanceCount = 0;
 
@@ -177,15 +187,15 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 		};
 		addNodeMeshes(*inScene.mRootNode);
 		
-		outScene.instances.resize(instanceCount);
+		outScene.instances.resize(baseInstanceCount + instanceCount);
 	}
 
 	// Geometry & meshes
 	{
 		
-		unsigned vertexCount = 0;
-		unsigned indexCount = 0;
-		unsigned meshCount = 0;
+		unsigned vertexCount = unsigned(baseVertexCount);
+		unsigned indexCount = unsigned(baseIndexCount);
+		unsigned meshCount = unsigned(baseMeshCount);
 
 		for (unsigned i = 0, ie = inScene.mNumMeshes; i < ie; ++i)
 		{
@@ -217,7 +227,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			outMesh.primitives.first = indexCount;
 			outMesh.primitives.last = indexEnd;
 			// todo: outMesh.bounds;
-			outMesh.material = mesh.mMaterialIndex;
+			outMesh.material = unsigned(baseMaterialCount) + mesh.mMaterialIndex;
 
 			++meshCount;
 			vertexCount += mesh.mNumVertices;
@@ -230,7 +240,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 		for (unsigned i = 0, ie = inScene.mNumMaterials; i < ie; ++i)
 		{
 			auto& mat = *inScene.mMaterials[i];
-			auto& outMat = outScene.materials[i];
+			auto& outMat = outScene.materials[baseMaterialCount + i];
 
 			outMat.reset_default();
 			
@@ -266,7 +276,6 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_HEIGHT(0), outMat.tex.bump, textureConvert);
 			get_material_property<float>(mat, AI_MATKEY_BUMPSCALING, outMat.tex.bumpScale, binary_duplicator());
 		}
-
 	}
 
 	// Textures
@@ -280,7 +289,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 
 	// Instances
 	{
-		size_t instanceCount = 0;
+		size_t instanceCount = baseInstanceCount;
 
 		std::function<void (aiNode const&, aiMatrix4x4 const&)> addNodeMeshes = [&](aiNode const& node, aiMatrix4x4 const& transform)
 		{
@@ -293,7 +302,7 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			{
 				auto& instance = outScene.instances[instanceCount++];
 
-				instance.mesh = node.mMeshes[j];
+				instance.mesh = unsigned(baseMeshCount) + node.mMeshes[j];
 				instance.transform = instanceTransform;
 				// todo: bounds?
 			}
@@ -309,17 +318,6 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 	}
 }
 
-void write_scene(const char* outName, aiScene const& inScene)
-{
-	scene::Scene outScene;
-
-	write_meshes(outScene, inScene);
-
-	auto bytes = scene::dump_scene(outScene);
-	auto file = stdx::write_binary_file(outName, std::ios_base::trunc);
-	file.write(bytes.data(), bytes.size());
-}
-
 } // namespace
 
 int scene_tool(char const* tool, char const* const* args, char const* const* args_end)
@@ -332,6 +330,9 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 
 	auto output = *--args_end;
 	auto input = *--args_end;
+	// allow for multiple inputs
+	auto allInputsBegin = args_end;
+	auto allInputsEnd = allInputsBegin + 1;
 
 	Assimp::DefaultLogger::create("assimp.log", Assimp::Logger::NORMAL, aiDefaultLogStream_STDOUT);
 	Assimp::Importer importer;
@@ -411,6 +412,8 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 				(void) scaleFactor;
 			else
 				std::cout << "Argument requires number, consult 'mesh help' for help: " << *arg << std::endl;
+		} else if (stdx::check_flag(*arg, "S+")) {
+			allInputsBegin = args_end = arg + 1;
 		}
 		else
 			std::cout << "Unrecognized argument, consult 'mesh help' for help: " << *arg << std::endl;
@@ -424,53 +427,80 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 	if (inputDiscardFlags != 0)
 		processFlags |= aiProcess_RemoveComponent;
 
-	auto scene = importer.ReadFile(input, 0);
-	if (!scene)
-		throwx( std::runtime_error("Assimp Loading") );
+	scene::Scene outScene;
 
-	if (scaleFactor != 1.0f)
+	for (auto addInput = allInputsEnd; addInput-- > allInputsBegin; )
 	{
-		aiMatrix4x4 scaling;
-		aiMatrix4x4::Scaling(aiVector3D(scaleFactor), scaling);
-		const_cast<aiMatrix4x4&>(scene->mRootNode->mTransformation) = scaling * scene->mRootNode->mTransformation;
-	}
-
-	if (geometryOnly)
-	{
-		for (unsigned i = 0, ie = scene->mNumMeshes; i < ie; ++i)
-			scene->mMeshes[i]->mMaterialIndex = 0;
-	}
-
-	if (forceUV)
-	{
-		for (unsigned i = 0, ie = scene->mNumMaterials; i < ie; ++i)
+		auto scene = importer.ReadFile(*addInput, 0);
+		if (!scene)
 		{
-			auto& material = *scene->mMaterials[i];
-			// Ensure that each material has some kind of texture mapping that results in UV coords being generated
-			int mapping = aiTextureMapping_BOX;
-			if (AI_FAILURE == material.Get(_AI_MATKEY_MAPPING_BASE, UINT_MAX, UINT_MAX, mapping))
+			std::cout << "Error loading " << *addInput << std::endl;
+			throwx( std::runtime_error("Assimp Loading") );
+		}
+
+		if (scaleFactor != 1.0f)
+		{
+			aiMatrix4x4 scaling;
+			aiMatrix4x4::Scaling(aiVector3D(scaleFactor), scaling);
+			const_cast<aiMatrix4x4&>(scene->mRootNode->mTransformation) = scaling * scene->mRootNode->mTransformation;
+		}
+
+		if (geometryOnly)
+		{
+			for (unsigned i = 0, ie = scene->mNumMeshes; i < ie; ++i)
+				scene->mMeshes[i]->mMaterialIndex = 0;
+		}
+
+		if (forceUV)
+		{
+			for (unsigned i = 0, ie = scene->mNumMaterials; i < ie; ++i)
 			{
-				scene->mMaterials[i]->Get(AI_MATKEY_MAPPING_DIFFUSE(0), mapping);
-				scene->mMaterials[i]->AddProperty(&mapping, 1, AI_MATKEY_MAPPING_DIFFUSE(0));
+				auto& material = *scene->mMaterials[i];
+				// Ensure that each material has some kind of texture mapping that results in UV coords being generated
+				int mapping = aiTextureMapping_BOX;
+				if (AI_FAILURE == material.Get(_AI_MATKEY_MAPPING_BASE, UINT_MAX, UINT_MAX, mapping))
+				{
+					scene->mMaterials[i]->Get(AI_MATKEY_MAPPING_DIFFUSE(0), mapping);
+					scene->mMaterials[i]->AddProperty(&mapping, 1, AI_MATKEY_MAPPING_DIFFUSE(0));
+				}
 			}
 		}
+
+		scene = importer.ApplyPostProcessing(processFlags);
+		if (!scene)
+		{
+			std::cout << "Error processing " << *addInput << std::endl;
+			throwx( std::runtime_error("Assimp Post-processing") );
+		}
+
+		write_meshes(outScene, *scene);
 	}
 
-	scene = importer.ApplyPostProcessing(processFlags);
-	if (!scene)
-		throwx( std::runtime_error("Assimp Post-processing") );
+	{
+		auto bytes = scene::dump_scene(outScene);
+		auto file = stdx::write_binary_file(output, std::ios_base::trunc);
+		file.write(bytes.data(), bytes.size());
+	}
 
-	write_scene(output, *scene);
+	{
+		std::vector<char const*> replayArgs(args_end - args + (allInputsEnd - allInputsBegin) + 1);
+		auto cmdIt = std::copy(args, args_end, replayArgs.data());
+		
+		std::vector<std::string> replayInPaths(allInputsEnd - allInputsBegin);
 
-	auto replayInPath = stdx::basename(input);
-	replayInPath.insert(replayInPath.begin(), '@');
+		for (auto addInput = allInputsBegin; addInput < allInputsEnd; ++addInput)
+		{
+			auto& replayInPath = replayInPaths[addInput - allInputsBegin];
+			replayInPath = stdx::basename(*addInput);
+			replayInPath.insert(replayInPath.begin(), '@');
 
-	std::vector<char const*> replayArgs(args_end - args + 2);
-	auto cmdIt = std::copy(args, args_end, replayArgs.data());
-	*cmdIt++ = replayInPath.data();
-	*cmdIt++ = output;
+			*cmdIt++ = replayInPath.data();
+		}
+		
+		*cmdIt++ = output;
 
-	record_command(tool, input, replayArgs.data(), replayArgs.size());
+		record_command(tool, input, replayArgs.data(), replayArgs.size());
+	}
 
 	return 0;
 }
