@@ -293,10 +293,10 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 
 		std::function<void (aiNode const&, aiMatrix4x4 const&)> addNodeMeshes = [&](aiNode const& node, aiMatrix4x4 const& transform)
 		{
-			math::vec< math::vec<float, 3>, 4 > instanceTransform;
+			math::mat4x3 instanceTransform;
 			for (int r = 0; r < 4; ++r)
 				for (int c = 0; c < 3; ++c)
-					instanceTransform.c[r].c[c] = transform[c][r];
+					instanceTransform.cls[r].c[c] = transform[c][r];
 
 			for (unsigned j = 0, je = node.mNumMeshes; j < je; ++j)
 			{
