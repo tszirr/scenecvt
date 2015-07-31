@@ -280,8 +280,8 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 
 	// Textures
 	{
-		outScene.textures.resize(textureChars);
-		auto textureData = outScene.textures.data();
+		outScene.texturePaths.resize(textureChars);
+		auto textureData = outScene.texturePaths.data();
 
 		for (auto&& texture : textureIdcs)
 			strcpy(textureData + texture.second, texture.first.c_str());
