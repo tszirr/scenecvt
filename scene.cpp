@@ -1,12 +1,13 @@
 #include "pch.h"
 
-#include "stdx" 
-#include "mathx"
+#include "stdx"
 
 #include <iostream>
 #include <string>
 #include <vector>
 #include <functional>
+
+#include "mathx"
 
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
@@ -112,6 +113,15 @@ void get_material_property(aiMaterial const& mat, A&& a, B&& b, C&& c, Dest& des
 	Type t;
 	if (AI_SUCCESS == mat.Get(a, b, c, t))
 		convert(dest, t);
+}
+
+namespace {
+	struct PrintReflected {
+		template <class T>
+		void operator ()(T const& v, char const* t) const {
+			std::cout << t << ": " << v << std::endl;
+		}
+	};
 }
 
 void write_meshes(scene::Scene& outScene, aiScene const& inScene)
@@ -250,10 +260,11 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_EMISSIVE, outMat.emissive, binary_converter());
 			
 			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_SPECULAR, outMat.specular, binary_converter());
+			outMat.reflectivity = outMat.specular;
+			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_REFLECTIVE, outMat.reflectivity, binary_converter());
 			get_material_property<float>(mat, AI_MATKEY_SHININESS_STRENGTH, [&](float pow) { for (auto& c : outMat.specular.c) c *= pow; });
 			get_material_property<float>(mat, AI_MATKEY_SHININESS, outMat.shininess, binary_duplicator());
-			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_REFLECTIVE, outMat.reflectivity, binary_converter());
-
+			
 			get_material_property<aiColor3D>(mat, AI_MATKEY_COLOR_TRANSPARENT, outMat.filter, binary_converter());
 			get_material_property<float>(mat, AI_MATKEY_OPACITY, [&](float opac) { 
 				bool color_opaque = [&]() { for (auto& c : outMat.filter.c) if (c != 0.0f) return false; return true; }();
@@ -275,13 +286,16 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_DISPLACEMENT(0), outMat.tex.bump, textureConvert);
 			get_material_property<aiString>(mat, AI_MATKEY_TEXTURE_HEIGHT(0), outMat.tex.bump, textureConvert);
 			get_material_property<float>(mat, AI_MATKEY_BUMPSCALING, outMat.tex.bumpScale, binary_duplicator());
+
+			std::cout << "Material: " << std::endl;
+			outMat.reflect(outMat, PrintReflected());
 		}
 	}
 
 	// Textures
 	{
-		outScene.textures.resize(textureChars);
-		auto textureData = outScene.textures.data();
+		outScene.texturePaths.resize(textureChars);
+		auto textureData = outScene.texturePaths.data();
 
 		for (auto&& texture : textureIdcs)
 			strcpy(textureData + texture.second, texture.first.c_str());
@@ -293,10 +307,10 @@ void write_meshes(scene::Scene& outScene, aiScene const& inScene)
 
 		std::function<void (aiNode const&, aiMatrix4x4 const&)> addNodeMeshes = [&](aiNode const& node, aiMatrix4x4 const& transform)
 		{
-			math::vec< math::vec<float, 3>, 4 > instanceTransform;
+			math::mat4x3 instanceTransform;
 			for (int r = 0; r < 4; ++r)
 				for (int c = 0; c < 3; ++c)
-					instanceTransform.c[r].c[c] = transform[c][r];
+					instanceTransform.cls[r].c[c] = transform[c][r];
 
 			for (unsigned j = 0, je = node.mNumMeshes; j < je; ++j)
 			{
