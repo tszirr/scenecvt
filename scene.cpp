@@ -10,6 +10,7 @@
 #include "mathx"
 
 #include <assimp/Importer.hpp>
+#include <assimp/Exporter.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/mesh.h>
@@ -39,6 +40,7 @@ void scene_help()
 	std::cout << "  /Sm            Identify and merge redundant materials"  << std::endl;
 	std::cout << "  /Sp            Pretransform and merge all nodes and instances"  << std::endl;
 	std::cout << "  /Ssf <float>   Set scale factor to <float> (default 1.0)"  << std::endl;
+	std::cout << "  /E <fmt>       Exports to 3rd-party format"  << std::endl;
 	std::cout << "  /S+ <inputs>   Merges many input meshes into one output mesh"  << std::endl;
 	std::cout << "  <input>        Input mesh file path"  << std::endl;
 	std::cout << "  <output>       Output mesh file path"  << std::endl;
@@ -363,6 +365,8 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 
 	unsigned processFlags = 0;
 	unsigned processMask = 0;
+
+	std::string exportFormat; // if s.th. else than binary scene
 	
 	// Polygons only
 	processFlags |= aiProcess_FindDegenerates | aiProcess_SortByPType;
@@ -428,6 +432,12 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 				std::cout << "Argument requires number, consult 'mesh help' for help: " << *arg << std::endl;
 		} else if (stdx::check_flag(*arg, "S+")) {
 			allInputsBegin = args_end = arg + 1;
+		} else if (stdx::check_flag(*arg, "E")) {
+			if (arg + 1 < args_end) {
+				exportFormat = *(arg + 1);
+				++arg;
+			} else
+				std::cout << "Argument requires format, consult 'mesh help' for help: " << *arg << std::endl;
 		}
 		else
 			std::cout << "Unrecognized argument, consult 'mesh help' for help: " << *arg << std::endl;
@@ -472,7 +482,7 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 				auto& material = *scene->mMaterials[i];
 				// Ensure that each material has some kind of texture mapping that results in UV coords being generated
 				int mapping = aiTextureMapping_BOX;
-				if (AI_FAILURE == material.Get(_AI_MATKEY_MAPPING_BASE, UINT_MAX, UINT_MAX, mapping))
+				if (AI_SUCCESS != material.Get(_AI_MATKEY_MAPPING_BASE, UINT_MAX, UINT_MAX, mapping))
 				{
 					scene->mMaterials[i]->Get(AI_MATKEY_MAPPING_DIFFUSE(0), mapping);
 					scene->mMaterials[i]->AddProperty(&mapping, 1, AI_MATKEY_MAPPING_DIFFUSE(0));
@@ -487,8 +497,24 @@ int scene_tool(char const* tool, char const* const* args, char const* const* arg
 			throwx( std::runtime_error("Assimp Post-processing") );
 		}
 
-		write_meshes(outScene, *scene);
+		if (!exportFormat.empty()) {
+			std::string outputFile = output;
+			if (allInputsEnd - allInputsBegin > 1) {
+				outputFile = *addInput;
+				outputFile += '.';
+				outputFile += exportFormat;
+			}
+			auto r = Assimp::Exporter().Export(scene, exportFormat.c_str(), output, 0);
+			if (r != AI_SUCCESS)
+				throwx( std::runtime_error("Assimp Export") );
+		}
+		else
+			write_meshes(outScene, *scene);
 	}
+
+	// done exporting
+	if (!exportFormat.empty())
+		return 0;
 
 	{
 		auto bytes = scene::dump_scene(outScene);
